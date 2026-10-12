@@ -7,8 +7,11 @@
 #include <xbyak/xbyak.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
+#include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <unordered_map>
@@ -34,12 +37,34 @@ bool SrtReadCapture::ReadStrict(void* userdata, uint64_t address, std::span<uint
 	return true;
 }
 
+bool ReadSrtWords(const SrtRuntime& runtime, SrtMemoryReader reader, uint64_t address,
+                  std::span<uint32_t> values) {
+	const auto unmapped = [&] {
+		return runtime.is_mapped != nullptr &&
+		       !runtime.is_mapped(runtime.userdata, address, values.size_bytes());
+	};
+	if (reader != nullptr) {
+		if (reader(runtime.userdata, address, values)) return true;
+		if (!unmapped()) return false;
+	} else if (!unmapped()) {
+		std::memcpy(values.data(), reinterpret_cast<const void*>(address), values.size_bytes());
+		return true;
+	}
+	std::fill(values.begin(), values.end(), 0u);
+	// Rare and worth seeing: it means the guest left a resource table unfilled.
+	static std::atomic_uint32_t reported {0};
+	if (reported.fetch_add(1, std::memory_order_relaxed) < 16) {
+		std::printf("SrtWalker: unmapped guest range 0x%016" PRIx64 " (+%zu bytes) read as zero\n",
+		            address, values.size_bytes());
+		std::fflush(stdout);
+	}
+	return true;
+}
+
 bool SrtReadCapture::ReadOrdinary(void* userdata, uint64_t address, std::span<uint32_t> values) {
 	auto& capture = *static_cast<SrtReadCapture*>(userdata);
-	if (capture.m_source.read_memory != nullptr) {
-		if (!capture.m_source.read_memory(capture.m_source.userdata, address, values)) return false;
-	} else {
-		std::memcpy(values.data(), reinterpret_cast<const void*>(address), values.size_bytes());
+	if (!ReadSrtWords(capture.m_source, capture.m_source.read_memory, address, values)) {
+		return false;
 	}
 	capture.m_ranges.emplace_back(address, values.size_bytes());
 	return true;
@@ -55,6 +80,9 @@ SrtRuntime CleanRuntime(SrtRuntime runtime) {
 namespace {
 
 constexpr uint64_t AddressMask = 0x0000ffffffffffffull;
+// Nothing is ever mapped in the first 64 KiB of an address space (Windows reserves it, and the
+// guest never maps there), so a table pointer below this is a null pointer plus an offset.
+constexpr uint64_t NullPageEnd = 0x10000u;
 
 bool AddSignedAddress(uint64_t base, int64_t offset, uint64_t& result) {
 	if (base > AddressMask) {
@@ -446,6 +474,11 @@ void CompileSrtWalker(ResourcePlan& program) {
 		code.push(code.rdi);
 		code.mov(code.rdi, code.qword[code.rdi + pointer_offset]);
 		code.and_(code.rdi, code.r9);
+		// A table in the null page is one the guest has not filled in. Do not dereference it
+		// here: report failure and let the caller walk it with its mapping rules.
+		code.mov(code.r10, NullPageEnd);
+		code.cmp(code.rdi, code.r10);
+		code.jb(failed, Xbyak::CodeGenerator::T_NEAR);
 		const auto first = reads.begin()->first;
 		const auto last = reads.rbegin()->first;
 		if (first < 0) {
@@ -685,13 +718,9 @@ bool SrtWalker::EvaluateRawRead(const Inst& inst, uint64_t& result) {
 	}
 	uint32_t word = 0;
 	const auto reader = vector ? m_runtime.read_specialization_memory : m_runtime.read_memory;
-	if (reader != nullptr) {
-		if (!reader(m_runtime.userdata, address, {&word, 1})) {
-			return false;
-		}
-	} else {
-		if (vector) return false;
-		std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
+	if (vector && reader == nullptr) return false;
+	if (!ReadSrtWords(m_runtime, reader, address, {&word, 1})) {
+		return false;
 	}
 	result = word;
 	return true;
@@ -1090,8 +1119,13 @@ bool SrtWalker::RefreshFlatBuffer(std::vector<uint32_t>& flat) {
 		m_context.values.resize(m_program.evaluation_value_count);
 		using Walker = bool KYTY_SYSV_ABI (*)(const uint32_t*, uint32_t*,
 		    ResourcePlan::EvaluationContext::Entry*, uint64_t, size_t);
-		return m_program.srt_code->getCode<Walker>()(m_runtime.user_data.data(), flat.data(),
-		    m_context.values.data(), m_context.generation, m_runtime.user_data.size());
+		if (m_program.srt_code->getCode<Walker>()(m_runtime.user_data.data(), flat.data(),
+		        m_context.values.data(), m_context.generation, m_runtime.user_data.size())) {
+			return true;
+		}
+		// The native walk stops at a null table. With a mapping probe the slower walk below can
+		// read it as unmapped memory; without one, failing is the strict answer.
+		if (m_runtime.is_mapped == nullptr) return false;
 	}
 	const auto refresh = [&](uint32_t slot) {
 		if (slot >= m_program.srt_reads.size()) return false;

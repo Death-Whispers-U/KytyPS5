@@ -112,6 +112,20 @@ bool ReadShaderGuestMemory(void*, uint64_t address, std::span<uint32_t> values) 
 	       Libs::LibKernel::Memory::TryReadBufferBacking(address, values.data(), values.size_bytes());
 }
 
+// TryReadBacking fails only when the guest range is not mapped (unlike TryReadBufferBacking, it
+// does not refuse GPU ranges off the GPU thread), so probing it separates "absent" from "present
+// but unreadable" for the SRT walk.
+bool IsShaderGuestMemoryMapped(void*, uint64_t address, uint64_t size) {
+	std::array<uint8_t, 64> scratch {};
+	for (uint64_t done = 0; done < size; done += scratch.size()) {
+		const auto chunk = std::min<uint64_t>(scratch.size(), size - done);
+		if (!Libs::LibKernel::Memory::TryReadBacking(address + done, scratch.data(), chunk)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void DumpShaderSpirv(const char* stage_name, uint64_t shader_hash,
                      const std::vector<uint32_t>& spirv) {
 	if (!Config::GraphicsDebugDumpEnabled()) {
@@ -422,6 +436,7 @@ struct PipelineCache::ProgramCache {
 		    .user_data                  = user_data,
 		    .shader_base                = params.Base(),
 		    .read_specialization_memory = ReadShaderGuestMemory,
+		    .is_mapped                  = IsShaderGuestMemoryMapped,
 		};
 		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
 			runtime.workgroup_counts = input_info.workgroup_counts;

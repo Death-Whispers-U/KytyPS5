@@ -10,6 +10,7 @@ namespace Libs::Graphics::ShaderRecompiler::IR {
 class Value;
 
 using SrtMemoryReader = bool (*)(void* userdata, uint64_t address, std::span<uint32_t> values);
+using SrtMappedProbe  = bool (*)(void* userdata, uint64_t address, uint64_t size);
 
 struct SrtRuntime {
 	std::span<const uint32_t> user_data;
@@ -18,7 +19,18 @@ struct SrtRuntime {
 	void*                     userdata                   = nullptr;
 	SrtMemoryReader           read_specialization_memory = nullptr;
 	std::span<const uint32_t> workgroup_counts;
+	// Optional. Tells "this guest range is not mapped" apart from "the read failed". A scalar
+	// load has no legality requirement on its base (RDNA2 ISA 7.2): the hardware issues it and
+	// gets undefined data, which the walk models as zero. A failed read of mapped memory stays a
+	// failure. Null keeps every read strict, which is what the tests expect by default.
+	SrtMappedProbe            is_mapped                  = nullptr;
 };
+
+// Reads guest words for an SRT walk: through `reader` when there is one, otherwise directly
+// (guest addresses are host addresses). With an is_mapped probe, an unmapped range reads as
+// zero instead of failing or faulting.
+bool ReadSrtWords(const SrtRuntime& runtime, SrtMemoryReader reader, uint64_t address,
+                  std::span<uint32_t> values);
 
 class SrtReadCapture {
 public:

@@ -279,6 +279,93 @@ void TestNativeNestedSrtRefresh() {
         "native SRT accepted nonadjacent nested pointer words");
 }
 
+// A table pointer the guest has not filled in yet (null) makes the walk read near address 0.
+// The hardware issues that scalar load anyway and gets undefined data (RDNA2 ISA 7.2 puts no
+// legality requirement on the base), so an unmapped read is modelled as zero. A read that fails
+// on memory that IS mapped stays a failure.
+void TestUnmappedSrtReadIsZero() {
+  using namespace Libs::Graphics::ShaderRecompiler::IR;
+  std::array<uint32_t, 3> leaf_table{0u, 0x12345678u, 0xabcdef01u};
+  const auto pointer_words = [](uint64_t address) {
+    return std::array<uint32_t, 2>{static_cast<uint32_t>(address) | 3u,
+                                  static_cast<uint32_t>(address >> 32u) | 0xabcd0000u};
+  };
+  // The root table holds the leaf pointer; null it out.
+  auto root_table = pointer_words(0u);
+  const auto user_data = pointer_words(reinterpret_cast<uint64_t>(root_table.data()));
+  auto program = SrtProgram(0u);
+  program.user_data_base = 4;
+  program.user_data_count = 2;
+  auto &block = *program.blocks[0];
+  const auto emit = [&](ValueOpcode opcode, std::initializer_list<Value> args) {
+    return Value(&block.AppendNewInst(opcode, args));
+  };
+  const auto low = emit(ValueOpcode::GetUserData, {Value(ScalarReg(4))});
+  const auto high = emit(ValueOpcode::GetUserData, {Value(ScalarReg(5))});
+  const auto root = emit(ValueOpcode::GetAddressResource, {low, high});
+  const auto read = [&](Value address, uint32_t offset) {
+    const auto value = emit(ValueOpcode::LoadAddressU32,
+                            {address, Value(offset), Value(0u), Value(true)});
+    value.Instruction()->SetFlags(MemoryFlags{.index = 0});
+    program.srt_reads.push_back(
+        {value, static_cast<uint32_t>(program.srt_reads.size())});
+    return value;
+  };
+  const auto pointer_low = read(root, 0u);
+  const auto pointer_high = read(root, 4u);
+  auto *leaf = program.srt_reads[0].value.Instruction();
+  leaf->Arg(0).Instruction()->SetArg(0, pointer_low);
+  leaf->Arg(0).Instruction()->SetArg(1, pointer_high);
+  leaf->SetArg(1, Value(7u));
+  read(leaf->Arg(0), 11u);
+  auto plan = ExtractResourcePlan(program);
+  Check(plan.srt_code != nullptr, "nested user-data tree did not compile an x86 walker");
+
+  // Below 64 KiB nothing is ever mapped; everything else here is real host memory.
+  const auto mapped_above_null_page = +[](void *, uint64_t address, uint64_t) {
+    return address >= 0x10000u;
+  };
+  ResourceSnapshot snapshot;
+  ResourceSpecialization specialization;
+  const SrtRuntime probed{.user_data = user_data, .is_mapped = mapped_above_null_page};
+  Check(MaterializeResources(plan, probed, snapshot, specialization),
+        "an unmapped table read failed materialization");
+  Check(snapshot.flattened_srt.size() == 4 && snapshot.flattened_srt[0] == 0u &&
+            snapshot.flattened_srt[3] == 0u,
+        "an unmapped table read did not read as zero");
+
+  // With a valid leaf pointer the probe changes nothing.
+  root_table = pointer_words(reinterpret_cast<uint64_t>(leaf_table.data()));
+  Check(MaterializeResources(plan, probed, snapshot, specialization) &&
+            snapshot.flattened_srt[0] == leaf_table[1] && snapshot.flattened_srt[3] == leaf_table[2],
+        "the mapped probe changed a valid table walk");
+
+  // A failed read on memory the probe calls mapped is a real error and must stay one.
+  const std::array<uint32_t, 2> fake_user_data{0x1003u, 0xabcd0000u};
+  const auto failing_reader = +[](void *, uint64_t address, std::span<uint32_t> words) {
+    if (address == 0x1000u) {
+      words[0] = 0x2003u;
+      return true;
+    }
+    if (address == 0x1004u) {
+      words[0] = 0u;
+      return true;
+    }
+    return false;
+  };
+  const SrtRuntime mapped_failure{.user_data = fake_user_data,
+                                  .read_memory = failing_reader,
+                                  .is_mapped = +[](void *, uint64_t, uint64_t) { return true; }};
+  Check(!MaterializeResources(plan, mapped_failure, snapshot, specialization),
+        "a failed read on mapped memory was accepted");
+  const SrtRuntime unmapped_failure{.user_data = fake_user_data,
+                                    .read_memory = failing_reader,
+                                    .is_mapped = +[](void *, uint64_t, uint64_t) { return false; }};
+  Check(MaterializeResources(plan, unmapped_failure, snapshot, specialization) &&
+            snapshot.flattened_srt[0] == 0u && snapshot.flattened_srt[3] == 0u,
+        "a failed read on unmapped memory did not read as zero");
+}
+
 void TestIntegerRuntimeValueFollowsSrtReads() {
   using namespace Libs::Graphics::ShaderRecompiler::IR;
   auto plan = SrtProgram(0x10000);
@@ -843,6 +930,7 @@ void DbgExit(int) { std::abort(); }
 int main() {
   TestMappedSrtUsesDirectReaderByDefault();
   TestNativeNestedSrtRefresh();
+  TestUnmappedSrtReadIsZero();
   TestIntegerRuntimeValueFollowsSrtReads();
   TestSrtAliasesRetainReadPolicy();
   TestUniformVectorDescriptorRead();
