@@ -705,6 +705,27 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			}
 			std::printf("\n");
 		}
+		// The memory each register points to: a fault on garbage data is explained by what the
+		// object holding it looks like (freed and reused, never filled, or real file contents).
+		const struct {
+			const char* name;
+			uint64_t    value;
+		} regs[] = {{"rax", info->rax}, {"rbx", info->rbx}, {"rcx", info->rcx}, {"rdx", info->rdx},
+		            {"rsi", info->rsi}, {"rdi", info->rdi}, {"rbp", info->rbp}, {"r8", info->r8},
+		            {"r9", info->r9},   {"r10", info->r10}, {"r11", info->r11}, {"r12", info->r12},
+		            {"r13", info->r13}, {"r14", info->r14}, {"r15", info->r15}};
+		for (const auto& reg: regs) {
+			const uint64_t start = (reg.value & ~uint64_t {0xf}) - 32;
+			if (reg.value < 0x10000 || !IsReadableRange(start, 128)) {
+				continue;
+			}
+			const auto* bytes = reinterpret_cast<const uint8_t*>(start);
+			std::printf("memory at %s=%016" PRIx64 " (from %016" PRIx64 "):", reg.name, reg.value, start);
+			for (int i = 0; i < 128; i++) {
+				std::printf("%s%02x", (i % 16 == 0) ? "\n " : " ", bytes[i]);
+			}
+			std::printf("\n");
+		}
 		std::fflush(stdout);
 	}
 	EXIT("Unhandled host exception: type=%u code=%u pc=0x%016" PRIx64
