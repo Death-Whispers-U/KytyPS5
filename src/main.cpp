@@ -97,6 +97,8 @@ static void PrintUsage() {
 	::printf("  --spirv-debug-printf <true|false>    Enable SPIR-V debug printf.\n");
 	::printf(
 	    "  --readback-linear-images <true|false> Read back writable linear images on submit.\n");
+	::printf("  --writeback-check <off|log|skip>     Report late GPU writebacks over newer guest\n"
+	         "                                       data (log, default); skip holds them back.\n");
 	::printf(
 	    "  --sync-raw-image-buffers <true|false> Synchronize raw reads of GPU images. Default: false.\n");
 	::printf(
@@ -518,6 +520,17 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 		} else if (arg == "--spirv-debug-printf") {
 			if (!ParseBool(value, options.config.spirv_debug_printf_enabled)) {
 				::printf("invalid boolean for %s: %s\n", arg.c_str(), value.c_str());
+				return false;
+			}
+		} else if (arg == "--writeback-check") {
+			if (value == "off") {
+				options.config.writeback_check_mode = 0;
+			} else if (value == "log") {
+				options.config.writeback_check_mode = 1;
+			} else if (value == "skip") {
+				options.config.writeback_check_mode = 2;
+			} else {
+				::printf("invalid value for %s (expected off, log or skip): %s\n", arg.c_str(), value.c_str());
 				return false;
 			}
 		} else if (arg == "--readback-linear-images") {

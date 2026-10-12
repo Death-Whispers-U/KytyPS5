@@ -12,6 +12,7 @@
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vulkanCommon.h"
+#include "graphics/host_gpu/renderer/cache/writebackCheck.h"
 #include "kernel/memory.h"
 
 #include <algorithm>
@@ -199,10 +200,23 @@ bool BufferCache::DownloadBufferMemory(Buffer& buffer, uint64_t vaddr, uint64_t 
 	                       vk::PipelineStageFlagBits::eAllCommands |
 	                           vk::PipelineStageFlagBits::eHost,
 	                       {}, 0, nullptr, 1, &after, 0, nullptr);
-	auto publish = [this, mapped, offset, total_size, buffer_address,
+	// Asynchronous downloads land later; note what guest memory held now to catch later writes.
+	std::vector<uint64_t> recorded;
+	if constexpr (async) {
+		for (const auto& copy: copies) {
+			recorded.push_back(WritebackCheck::Record(buffer_address + copy.srcOffset, copy.size));
+		}
+	}
+	auto publish = [this, mapped, offset, total_size, buffer_address, recorded = std::move(recorded),
 	                copies = std::move(copies), owner = std::move(temporary)] {
 		(owner ? *owner : m_download_buffer).Invalidate(offset, total_size);
-		for (const auto& copy: copies) {
+		for (size_t i = 0; i < copies.size(); i++) {
+			const auto& copy = copies[i];
+			if (i < recorded.size() &&
+			    !WritebackCheck::BeforeWrite("buffer", buffer_address + copy.srcOffset, copy.size,
+			                                 recorded[i])) {
+				continue;
+			}
 			Libs::LibKernel::Memory::WriteBacking(buffer_address + copy.srcOffset,
 			                                      mapped + (copy.dstOffset - offset), copy.size);
 		}

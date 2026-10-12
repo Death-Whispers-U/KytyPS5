@@ -181,6 +181,10 @@ bool ReadbackLinearImagesEnabled() {
 	return g_config->readback_linear_images;
 }
 
+uint32_t WritebackCheckMode() {
+	return g_config->writeback_check_mode;
+}
+
 bool SyncRawImageBuffersEnabled() {
 	return g_config->sync_raw_image_buffers;
 }

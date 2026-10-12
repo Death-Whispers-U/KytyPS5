@@ -84,6 +84,7 @@ struct ConfigOptions {
 	uint32_t               trace_list_next_offset      = 0;
 	bool                   renderdoc_enabled           = false;
 	bool                   readback_linear_images      = false;
+	uint32_t               writeback_check_mode        = 1;  // 0 off, 1 log, 2 skip
 	bool                   sync_raw_image_buffers      = false;
 	bool                   tessellation_enabled        = false;
 	bool                   trophy_enabled              = true;
@@ -151,6 +152,7 @@ TraceListSpec TraceList();
 
 bool RenderDocEnabled();
 bool ReadbackLinearImagesEnabled();
+uint32_t WritebackCheckMode();
 bool SyncRawImageBuffersEnabled();
 bool TessellationEnabled();
 bool TrophyEnabled();

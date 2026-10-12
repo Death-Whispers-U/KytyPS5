@@ -14,6 +14,7 @@
 #include "graphics/host_gpu/renderer/image/textureCommon.h"
 #include "graphics/host_gpu/renderer/image/tiler.h"
 #include "graphics/host_gpu/renderer/render.h"
+#include "graphics/host_gpu/renderer/cache/writebackCheck.h"
 #include "kernel/memory.h"
 
 #include <algorithm>
@@ -1829,6 +1830,7 @@ bool TextureCache::DownloadImageMemory(ImageId id) {
 		return false;
 	}
 	download.Flush(offset, range.size);
+	const auto recorded = WritebackCheck::Record(range.address, range.size);
 
 	DownloadImage(image, download, offset, range.size, image.info.resources.levels);
 	vk::BufferMemoryBarrier barrier {};
@@ -1844,9 +1846,11 @@ bool TextureCache::DownloadImageMemory(ImageId id) {
 	m_scheduler.Current().Handle().pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
 	                                               vk::PipelineStageFlagBits::eHost, {}, 0, nullptr,
 	                                               1, &barrier, 0, nullptr);
-	m_scheduler.DeferPriorityOperation([&download, range, mapped, offset] {
+	m_scheduler.DeferPriorityOperation([&download, range, mapped, offset, recorded] {
 		download.Invalidate(offset, range.size);
-		LibKernel::Memory::WriteBacking(range.address, mapped, range.size);
+		if (WritebackCheck::BeforeWrite("image", range.address, range.size, recorded)) {
+			LibKernel::Memory::WriteBacking(range.address, mapped, range.size);
+		}
 	});
 	return true;
 }
