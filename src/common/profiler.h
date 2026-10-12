@@ -23,6 +23,8 @@ inline constexpr uint32_t DeepOrangeA200 = 0xff6e40;
 namespace Profiler {
 
 void SetThreadName(const char* name);
+// Names another running thread for the OS (Windows thread description); no-op elsewhere.
+void SetOsThreadName(uint64_t os_thread_id, const char* name);
 
 void Initialize();
 void Shutdown();

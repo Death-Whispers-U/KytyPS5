@@ -6,6 +6,7 @@
 #include "common/emulatorConfig.h"
 #include "common/hostException.h"
 #include "common/logging/log.h"
+#include "common/profiler.h"
 #include "common/singleton.h"
 #include "common/stringUtils.h"
 #include "common/threads.h"
@@ -3200,6 +3201,11 @@ static void* RunThread(void* arg) {
 	os_thread_id = GetHostThreadId();
 #endif
 	thread->host_thread_id = os_thread_id;
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	if (!thread->name.empty()) {
+		Profiler::SetThreadName(thread->name.c_str());
+	}
+#endif
 #if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	if (!thread->name.empty()) {
 #if defined(__APPLE__)
@@ -3604,6 +3610,8 @@ int KYTY_SYSV_ABI PthreadRename(Pthread thread, const char* name) {
 	}
 
 	thread->name = std::string(name);
+	// A thread that has not started yet is named when it starts.
+	Profiler::SetOsThreadName(thread->host_thread_id, name);
 
 	return OK;
 }
