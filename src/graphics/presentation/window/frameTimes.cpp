@@ -38,14 +38,22 @@ void Report() {
 		return;
 	}
 	std::vector<float> intervals;
+	Clock::time_point  last_present;
 	{
 		std::lock_guard lock(g_mutex);
 		intervals.swap(g_intervals_ms);
+		last_present = g_last_present;
 	}
 	std::string line = "FrameTimes:";
-	char        number[16];
+	char        number[24];
 	for (const auto ms: intervals) {
 		std::snprintf(number, sizeof(number), " %.1f", ms);
+		line += number;
+	}
+	if (last_present != Clock::time_point {}) {
+		// How long ago the newest frame was presented, so a reader can place every frame in time.
+		std::snprintf(number, sizeof(number), " @%.1f",
+		              std::chrono::duration<float, std::milli>(Clock::now() - last_present).count());
 		line += number;
 	}
 	std::printf("%s\n", line.c_str());
