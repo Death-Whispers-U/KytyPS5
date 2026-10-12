@@ -1,7 +1,10 @@
 #include "graphics/host_gpu/renderer/masterSemaphore.h"
 
 #include "common/assert.h"
+#include "graphics/host_gpu/deviceFault.h"
 #include "graphics/host_gpu/graphicContext.h"
+
+#include <cinttypes>
 
 namespace Libs::Graphics {
 
@@ -50,7 +53,11 @@ void MasterSemaphore::Wait(uint64_t tick) {
 	wait_info.pValues        = &tick;
 
 	const auto result = m_graphics.device.waitSemaphores(&wait_info, UINT64_MAX);
-	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);
+	if (result != vk::Result::eSuccess) {
+		ReportDeviceFailure("vkWaitSemaphores", result);
+		EXIT("MasterSemaphore: waiting for GPU tick %" PRIu64 " failed: %s\n", tick,
+		     vk::to_string(result).c_str());
+	}
 	Refresh();
 }
 
