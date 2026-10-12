@@ -37072,6 +37072,23 @@ GraphicsCase GraphicsInterpolationExport() {
            O::V_MOV_B32, O::EXP, O::S_ENDPGM}};
 }
 
+// A pixel wave starts with EXEC holding only its covered pixels. The 1x1 target leaves one
+// covered pixel in its quad; the other three lanes are helper invocations, which a guest
+// S_BCNT1 of EXEC must not count (a wave-aggregated atomic elected among them is discarded).
+GraphicsCase GraphicsExecExcludesHelperLanes() {
+  GraphicsCase test;
+  test.name = "GraphicsExecExcludesHelperLanes";
+  test.fragment_code = {
+      EncodeSop1(0x10, 0, 126),       // s_bcnt1_i32_b64 s0, exec
+      EncodeVop1(0x06, 0, 0),         // v_cvt_f32_u32 v0, s0
+      EncodeExp0(0x00, 0xf, true, false, true), EncodeExp1(0, 0, 0, 0)};
+  AppendEnd(&test.fragment_code);
+  test.expected_pixel = {0x3f800000u, 0x3f800000u, 0x3f800000u, 0x3f800000u};
+  test.opcodes = {ShaderOpcode::S_BCNT1_I32_B64, ShaderOpcode::V_CVT_F32_U32, ShaderOpcode::EXP,
+                  ShaderOpcode::S_ENDPGM};
+  return test;
+}
+
 GraphicsCase GraphicsPositionWExport() {
   GraphicsCase test;
   test.name = "GraphicsPositionWExport";
@@ -38076,6 +38093,7 @@ std::vector<TestCase> MakeCases() {
 std::vector<GraphicsCase> MakeGraphicsCases() {
   return {
       GraphicsInterpolationExport(),
+      GraphicsExecExcludesHelperLanes(),
       GraphicsPositionWExport(),
       GraphicsPackedHalfCentroid(),
       GraphicsPerspectiveSample(false),
@@ -43772,6 +43790,11 @@ int main(int argc, char **argv) {
     RunCase(&vulkan, ImageGatherExplicitLod());
     RunCase(&vulkan, SharedReturnKeepsSelectedValues());
     RunCase(&vulkan, SiblingSharedExitKeepsCapturedConditions());
+    return 0;
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--helper-exec-only") == 0) {
+    VulkanHarness vulkan;
+    RunGraphicsCase(&vulkan, GraphicsExecExcludesHelperLanes());
     return 0;
   }
   if (argc == 2 && std::strcmp(argv[1], "--position-w-only") == 0) {

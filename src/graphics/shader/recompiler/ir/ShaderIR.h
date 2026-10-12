@@ -212,6 +212,7 @@ enum class StageInputKind {
 	LocalInvocationIndex,
 	GlobalInvocationId,
 	Parameter,
+	HelperInvocation,
 };
 
 enum class StageOutputKind {

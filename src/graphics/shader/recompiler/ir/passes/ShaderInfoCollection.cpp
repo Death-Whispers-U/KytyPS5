@@ -160,6 +160,9 @@ void AddBuiltinInput(ShaderInfo& info, StageInputKind kind) {
 		case StageInputKind::FrontFacing:
 			AddInput(info, kind, 0, 1, "gl_FrontFacing");
 			break;
+		case StageInputKind::HelperInvocation:
+			AddInput(info, kind, 0, 1, "gl_HelperInvocation");
+			break;
 		case StageInputKind::Layer: AddInput(info, kind, 0, 1, "gl_Layer"); break;
 		case StageInputKind::SampleId: AddInput(info, kind, 0, 1, "gl_SampleID"); break;
 		case StageInputKind::BaryCoordSmoothSample:
@@ -435,6 +438,7 @@ void Visit(Program& program, ShaderStageInputInfo input_info, InputUsage& inputs
 				case StageInputKind::PrimitiveId:
 				case StageInputKind::InstanceIndex:
 				case StageInputKind::FrontFacing:
+				case StageInputKind::HelperInvocation:
 				case StageInputKind::LocalInvocationIndex:
 					if (component != 0u) {
 						return Fail("typed scalar builtin component is out of range");
