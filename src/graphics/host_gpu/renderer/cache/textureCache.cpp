@@ -475,6 +475,27 @@ ImageId TextureCache::GetNullImage(const ImageDesc& desc) {
 	info.mip_layout[0]   = {0, info.bytes_per_block, 1, 1};
 	const auto id        = InsertImage(info);
 	m_null_images.emplace(format, id);
+
+	// A null texture reads as zero. A new image starts in UNDEFINED layout with undefined
+	// contents, so clear it once here instead of relying on what the driver hands back.
+	auto&      image   = m_slot_images[id];
+	auto&      command = m_scheduler.Current();
+	const bool depth   = info.IsDepth();
+	const vk::ImageSubresourceRange range {
+	    depth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+	image.Transit(vk::ImageLayout::eTransferDstOptimal, vk::AccessFlagBits2::eTransferWrite, {},
+	              command.Handle());
+	if (depth) {
+		const vk::ClearDepthStencilValue zero {0.0f, 0};
+		command.Handle().clearDepthStencilImage(image.backing.image,
+		                                        vk::ImageLayout::eTransferDstOptimal, &zero, 1,
+		                                        &range);
+	} else {
+		// All-zero bits: 0 for float, uint and sint formats alike.
+		const vk::ClearColorValue zero {std::array<float, 4> {0.0f, 0.0f, 0.0f, 0.0f}};
+		command.Handle().clearColorImage(image.backing.image, vk::ImageLayout::eTransferDstOptimal,
+		                                 &zero, 1, &range);
+	}
 	return id;
 }
 

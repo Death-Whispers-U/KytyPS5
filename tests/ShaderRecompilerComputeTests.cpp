@@ -11840,6 +11840,88 @@ public:
   }
 
 
+  // A shadow map the guest left unbound: a depth-compare sample of a null T#. Vulkan only
+  // allows comparison sampling on formats with SAMPLED_IMAGE_DEPTH_COMPARISON, so the null
+  // stand-in must be a depth image, and it must hold zero rather than undefined contents.
+  void CheckNullComparisonTexture() {
+    constexpr const char *name = "NullComparisonTexture";
+    constexpr std::array<float, 4> references{0.1f, 0.3f, 0.5f, 0.9f};
+    EnsureRuntimeContext();
+    RenderContext context(m_runtime_context);
+    auto &scheduler = context.GetCommandScheduler();
+    HW::Context registers{};
+    HW::UserConfig user_config{};
+    HW::Shader shaders{};
+    scheduler.Begin(registers, user_config, shaders);
+    auto &cache = context.GetTextureCache();
+    auto &executor = context.GetRenderExecutor();
+    // A 2D float T# whose base address is 0: the guest bound nothing.
+    ShaderTextureResource descriptor{{0u, 0x00700000u, 0, 0x90000000u | DstSel(4, 4, 4, 4),
+                                      0, 0x00700000u, 0, 0}};
+    // Compare function 4 = GREATER: every positive reference passes against a zero depth.
+    ShaderSamplerResource sampler_descriptor{{4u << 12u, 0, 1u << 24u, 0}};
+    TestCase test;
+    test.name = name;
+    test.has_user_data = true;
+    test.image_descriptor_swizzle = descriptor.DstSelXYZW();
+    std::copy_n(descriptor.fields, 8, test.user_data.begin());
+    std::copy_n(sampler_descriptor.fields, 4, test.user_data.begin() + 8);
+    test.user_data[50] = references.size() * sizeof(uint32_t);
+    test.opcodes = {ShaderOpcode::V_MOV_B32, ShaderOpcode::IMAGE_SAMPLE,
+                    ShaderOpcode::BUFFER_STORE_DWORD, ShaderOpcode::S_ENDPGM};
+    test.required_spirv = {"OpImageSampleDrefExplicitLod"};
+    for (const auto reference : references) {
+      AppendVMovLiteral(&test.code, 20, std::bit_cast<uint32_t>(reference));
+      AppendVMovLiteral(&test.code, 21, std::bit_cast<uint32_t>(0.5f));
+      AppendVMovLiteral(&test.code, 22, std::bit_cast<uint32_t>(0.5f));
+      test.code.push_back(EncodeMimg0(0x2f, 1, 0, false, 1));
+      test.code.push_back(EncodeMimg1(0, 20, 0, 2));
+      AppendStoreVgpr(&test.code, 0, static_cast<uint32_t>(test.expected.size()));
+      test.expected.push_back(0x3f800000u);
+    }
+    AppendEnd(&test.code);
+    const auto compiled = CompileCase(test, SubgroupSize());
+    Require(name, "comparison resource",
+            compiled.program.info.images.size() == 1 &&
+                compiled.program.info.images[0].depth_compare,
+            "null comparison sample lost its depth-compare semantics");
+    ShaderRecompiler::IR::DescriptorValue value{};
+    value.dword_count = 8;
+    std::copy_n(descriptor.fields, 8, value.dwords.begin());
+    auto binding = RenderExecutorTestAccess::ResolveTexture(
+        executor, compiled.program.info.images[0], value);
+    const auto view = cache.FindTexture(binding.image_id, binding.desc);
+    auto &image = cache.GetImage(binding.image_id);
+    Require(name, "depth stand-in",
+            view != nullptr && image.info.IsDepth() &&
+                binding.desc.view_info.aspect == vk::ImageAspectFlagBits::eDepth,
+            "a compare-sampled null texture was bound as a color image");
+    // A plain sample of a null texture keeps its color stand-in.
+    auto plain_resource = compiled.program.info.images[0];
+    plain_resource.depth_compare = false;
+    auto plain = RenderExecutorTestAccess::ResolveTexture(executor, plain_resource, value);
+    (void)cache.FindTexture(plain.image_id, plain.desc);
+    Require(name, "color stand-in",
+            plain.image_id != binding.image_id && !cache.GetImage(plain.image_id).info.IsDepth(),
+            "a plain null texture became a depth image");
+    scheduler.Finish();
+
+    auto output = CreateStorageBuffer(name, {}, test.expected.size());
+    const auto sampler = context.GetSamplerCache().GetSampler(
+        sampler_descriptor, compiled.program.info.samplers[0].integer_border);
+    Image sampled;
+    sampled.view = view;
+    sampled.layout = image.backing.state.layout;
+    Dispatch(test, compiled, output, nullptr, &sampled, nullptr, nullptr, sampler);
+    Require(name, "null comparisons",
+            ReadBuffer(name, output, test.expected.size()) == test.expected,
+            "a null depth stand-in did not read as zero depth");
+    DestroyBuffer(&output);
+    RenderExecutorTestAccess::ResetBindings(executor);
+    scheduler.Finish();
+    std::printf("[gpu]     %-32s ok\n", name);
+  }
+
   void CheckCubeFaceStorageExpansion() {
     constexpr const char *name = "CubeFaceStorageExpansion";
     constexpr uintptr_t base = 0x0000000204700000ull;
@@ -44117,6 +44199,7 @@ int main(int argc, char **argv) {
     CheckSampledDepthResource();
     CheckDepthTextureEncoding();
     vulkan.CheckComparisonDepthTexture();
+    vulkan.CheckNullComparisonTexture();
     vulkan.CheckRasterization(true);
     RunCase(nullptr, ImageSampleA16CompareBiasRdna2AddressOrder());
     return 0;
@@ -44220,6 +44303,7 @@ int main(int argc, char **argv) {
   vulkan.CheckSamplerBorderColors();
   if (rasterization) {
     vulkan.CheckComparisonDepthTexture();
+    vulkan.CheckNullComparisonTexture();
     vulkan.CheckRasterization(true);
   } else {
     skipped_device_checks = true;
