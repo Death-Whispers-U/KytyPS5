@@ -52,6 +52,7 @@ struct ConfigOptions {
 	uint32_t               controller_vibration_intensity = 100;
 	PresentMode            present_mode                = PresentMode::Mailbox;
 	int32_t                gpu_index                   = -1;
+	int32_t                display_index               = -1;  // -1: the primary display
 	bool                   fullscreen_enabled          = false;
 	bool                   hdr_enabled                 = false;
 	bool                   hide_cursor_enabled         = false;
@@ -108,6 +109,7 @@ uint32_t GetControllerSpeakerVolume();
 uint32_t GetControllerVibrationIntensity();
 PresentMode GetPresentMode();
 int32_t GetGpuIndex();
+int32_t GetDisplayIndex();
 bool     FullscreenEnabled();
 bool     HdrEnabled();
 bool     HideCursorEnabled();

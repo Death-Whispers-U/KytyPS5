@@ -68,6 +68,10 @@ int32_t GetGpuIndex() {
 	return g_config->gpu_index;
 }
 
+int32_t GetDisplayIndex() {
+	return g_config->display_index;
+}
+
 bool FullscreenEnabled() {
 	return g_config->fullscreen_enabled;
 }

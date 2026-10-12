@@ -11,6 +11,9 @@ class Presenter;
 [[nodiscard]] Presenter& WindowInit(uint32_t width, uint32_t height);
 void                     WindowRun();
 void                     WindowShutdown();
+// Prints "Display <index>: <name> <width>x<height> at <x>,<y>[ primary]" for each display, in
+// the order --display numbers them.
+void                     WindowListDisplays();
 
 } // namespace Libs::Graphics
 

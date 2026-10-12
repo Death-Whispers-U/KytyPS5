@@ -816,13 +816,38 @@ static void WindowCreate(WindowContext& context) {
 		window_flags |= static_cast<uint32_t>(SDL_WINDOW_BORDERLESS);
 	}
 #endif
-	context.window = SDL_CreateWindow(KYTY_SDL_WINDOW_CAPTION, width, height, window_flags);
+	// The window (and fullscreen) opens on the chosen display; SDL only honours that for a
+	// fullscreen window when the position is given at creation.
+	SDL_DisplayID display  = 0;
+	const auto    wanted   = Config::GetDisplayIndex();
+	if (wanted >= 0) {
+		int  count = 0;
+		auto* ids  = SDL_GetDisplays(&count);
+		if (ids != nullptr && wanted < count) {
+			display = ids[wanted];
+		} else {
+			LOGF("Display %d does not exist (%d connected); using the primary display\n", wanted, count);
+		}
+		SDL_free(ids);
+	}
+	const int position = display != 0 ? static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(display))
+	                                  : static_cast<int>(SDL_WINDOWPOS_CENTERED);
+	const auto props = SDL_CreateProperties();
+	SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, KYTY_SDL_WINDOW_CAPTION);
+	SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, position);
+	SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, position);
+	SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
+	SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
+	SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, window_flags);
+	context.window = SDL_CreateWindowWithProperties(props);
+	SDL_DestroyProperties(props);
 
 	if (context.window == nullptr) {
 		EXIT("%s\n", SDL_GetError());
 	}
-
-	SDL_SetWindowPosition(context.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+	if (display != 0) {
+		LOGF("Window display: %d (%s)\n", wanted, SDL_GetDisplayName(display));
+	}
 	HostInputInit(context.window);
 	InitializeSystemOverlayInput(context.window);
 	context.UpdateIcon();
@@ -859,6 +884,25 @@ void WindowRun() {
 	g_window->Run();
 	Common::LockGuard lock(g_window->render_context->GetMutex());
 	g_window->render_context->GetPipelineCache().Save();
+}
+
+void WindowListDisplays() {
+	if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+		::printf("cannot list displays: %s\n", SDL_GetError());
+		return;
+	}
+	int        count   = 0;
+	auto*      ids     = SDL_GetDisplays(&count);
+	const auto primary = SDL_GetPrimaryDisplay();
+	for (int i = 0; ids != nullptr && i < count; i++) {
+		SDL_Rect bounds {};
+		SDL_GetDisplayBounds(ids[i], &bounds);
+		const char* name = SDL_GetDisplayName(ids[i]);
+		::printf("Display %d: %s %dx%d at %d,%d%s\n", i, name != nullptr ? name : "?", bounds.w, bounds.h,
+		         bounds.x, bounds.y, ids[i] == primary ? " primary" : "");
+	}
+	SDL_free(ids);
+	SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
 void WindowShutdown() {

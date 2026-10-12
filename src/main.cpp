@@ -7,6 +7,7 @@
 #include "common/threads.h"
 #include "common/virtualMemory.h"
 #include "emulator.h"
+#include "graphics/presentation/window.h"
 #include "kytyGitVersion.h"
 
 #include <charconv>
@@ -60,6 +61,8 @@ static void PrintUsage() {
 	    "  --present-mode <value>               Fifo, Mailbox, or Immediate. Default: Mailbox.\n");
 	::printf(
 	    "  --gpu <index>                        Vulkan physical device index. Default: auto.\n");
+	::printf("  --display <index>                    Open the window on this display. Default: primary.\n");
+	::printf("  --list-displays                      Print the displays and their indexes, then exit.\n");
 	::printf("  --fullscreen                         Run in borderless desktop fullscreen.\n");
 	::printf("  --hdr                                Enable HDR10 output when supported.\n");
 	::printf(
@@ -430,6 +433,11 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 				::printf("invalid present mode: %s\n", value.c_str());
 				return false;
 			}
+		} else if (arg == "--display") {
+			if (!ParseInt32(value, options.config.display_index) || options.config.display_index < 0) {
+				::printf("invalid display index: %s\n", value.c_str());
+				return false;
+			}
 		} else if (arg == "--gpu") {
 			if (!ParseInt32(value, options.config.gpu_index)) {
 				::printf("invalid gpu index: %s\n", value.c_str());
@@ -561,6 +569,11 @@ static int Main(int argc, char* argv[]) {
 
 	if (argc < 2) {
 		PrintUsage();
+		return 0;
+	}
+
+	if (argc == 2 && std::string_view(argv[1]) == "--list-displays") {
+		Libs::Graphics::WindowListDisplays();
 		return 0;
 	}
 
