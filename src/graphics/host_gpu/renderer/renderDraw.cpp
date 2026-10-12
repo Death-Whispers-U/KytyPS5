@@ -11,6 +11,7 @@
 #include "graphics/guest_gpu/gpu_defs.h"
 #include "graphics/guest_gpu/graphicsRun.h"
 #include "graphics/host_gpu/gpuCheckpoints.h"
+#include "graphics/host_gpu/renderer/shaderTrace.h"
 #include "graphics/guest_gpu/hardwareContext.h"
 #include "graphics/guest_gpu/tile.h"
 #include "graphics/host_gpu/graphicContext.h"
@@ -1133,6 +1134,14 @@ void RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, CommandBuffer& buff
 		(void)m_context.GetBufferCache().FindBuffer(
 		    index_source.address, static_cast<uint64_t>(draw.index_count) *
 		                              index_source.guest_element_size);
+	}
+	if (ShaderTrace::Enabled()) {
+		for (uint32_t i = 0; i < vertex_stages.size(); i++) {
+			ShaderTrace::RecordStageWrites("draw", submit_id, state.vertex_info[i].stage);
+		}
+		if (state.ps_active) {
+			ShaderTrace::RecordStageWrites("draw", submit_id, state.ps_input_info.stage);
+		}
 	}
 	LogDrawPhase(draw.Name(), "PrepareBindings");
 	auto&                            bindings = m_graphics_bindings;

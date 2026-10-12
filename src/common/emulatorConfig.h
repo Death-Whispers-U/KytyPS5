@@ -75,6 +75,11 @@ struct ConfigOptions {
 	bool                   spirv_debug_printf_enabled  = false;
 	bool                   gpu_assisted_validation_enabled = false;
 	bool                   gpu_checkpoints_enabled     = false;
+	uint64_t               trace_shader_hash           = 0;
+	bool                   trace_list_enabled          = false;
+	uint32_t               trace_list_buffer           = 0;
+	uint32_t               trace_list_stride           = 0;
+	uint32_t               trace_list_next_offset      = 0;
 	bool                   renderdoc_enabled           = false;
 	bool                   readback_linear_images      = false;
 	bool                   sync_raw_image_buffers      = false;
@@ -131,6 +136,14 @@ bool SpirvDebugPrintfEnabled();
 
 bool GpuAssistedValidationEnabled();
 bool GpuCheckpointsRequested();
+uint64_t TraceShaderHash();
+struct TraceListSpec {
+	bool     enabled     = false;
+	uint32_t buffer      = 0;
+	uint32_t stride      = 0;
+	uint32_t next_offset = 0;
+};
+TraceListSpec TraceList();
 
 bool RenderDocEnabled();
 bool ReadbackLinearImagesEnabled();

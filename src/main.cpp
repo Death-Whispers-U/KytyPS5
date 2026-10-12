@@ -86,6 +86,10 @@ static void PrintUsage() {
 	::printf("  --profile                            Enable the Tracy profiler.\n");
 	::printf("  --gpu-checkpoints                    Mark every draw and dispatch so a lost GPU\n"
 	         "                                       device reports how far it got. NVIDIA only.\n");
+	::printf("  --trace-shader <hash>                Report one shader's bindings and what last\n"
+	         "                                       wrote them, e.g. cs_657ad04626bf9d55.\n");
+	::printf("  --trace-list <buf>:<stride>:<next>   With --trace-shader: check that buffer's\n"
+	         "                                       linked-list links for cycles.\n");
 	::printf("  --spirv-debug-printf <true|false>    Enable SPIR-V debug printf.\n");
 	::printf(
 	    "  --readback-linear-images <true|false> Read back writable linear images on submit.\n");
@@ -159,6 +163,45 @@ static bool ParseUint32(const std::string& value, uint32_t& out) {
 		return false;
 	}
 	out = number;
+	return true;
+}
+
+// A guest shader hash as printed in shader names: "cs_657ad04626bf9d55", "0x657ad...", or bare hex.
+static bool ParseShaderHash(const std::string& value, uint64_t& out) {
+	std::string_view text = value;
+	if (text.size() > 3 && text[2] == '_') {
+		text.remove_prefix(3);
+	} else if (text.starts_with("0x") || text.starts_with("0X")) {
+		text.remove_prefix(2);
+	}
+	uint64_t number = 0;
+	auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number, 16);
+	if (error != std::errc() || end != text.data() + text.size() || number == 0) {
+		return false;
+	}
+	out = number;
+	return true;
+}
+
+// "<buffer>:<stride>:<next offset>", e.g. "1:8:4".
+static bool ParseTraceList(const std::string& value, Config::ConfigOptions& config) {
+	uint32_t parts[3] {};
+	size_t   start = 0;
+	for (uint32_t i = 0; i < 3; i++) {
+		const auto end = i < 2 ? value.find(':', start) : value.size();
+		if (end == std::string::npos ||
+		    !ParseUint32(value.substr(start, end - start), parts[i])) {
+			return false;
+		}
+		start = end + 1;
+	}
+	if (parts[1] == 0 || parts[2] + sizeof(uint32_t) > parts[1]) {
+		return false;
+	}
+	config.trace_list_enabled     = true;
+	config.trace_list_buffer      = parts[0];
+	config.trace_list_stride      = parts[1];
+	config.trace_list_next_offset = parts[2];
 	return true;
 }
 
@@ -447,6 +490,17 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			}
 		} else if (arg == "--printf-output-file") {
 			options.config.printf_output_file = Common::PathFromUtf8(value);
+		} else if (arg == "--trace-shader") {
+			if (!ParseShaderHash(value, options.config.trace_shader_hash)) {
+				::printf("invalid shader hash for %s: %s\n", arg.c_str(), value.c_str());
+				return false;
+			}
+		} else if (arg == "--trace-list") {
+			if (!ParseTraceList(value, options.config)) {
+				::printf("invalid %s (expected <buffer>:<stride>:<next offset>): %s\n", arg.c_str(),
+				         value.c_str());
+				return false;
+			}
 		} else if (arg == "--spirv-debug-printf") {
 			if (!ParseBool(value, options.config.spirv_debug_printf_enabled)) {
 				::printf("invalid boolean for %s: %s\n", arg.c_str(), value.c_str());

@@ -156,6 +156,15 @@ bool GpuCheckpointsRequested() {
 	return g_config->gpu_checkpoints_enabled;
 }
 
+uint64_t TraceShaderHash() {
+	return g_config->trace_shader_hash;
+}
+
+TraceListSpec TraceList() {
+	return {g_config->trace_list_enabled, g_config->trace_list_buffer, g_config->trace_list_stride,
+	        g_config->trace_list_next_offset};
+}
+
 bool RenderDocEnabled() {
 	return g_config->renderdoc_enabled;
 }
