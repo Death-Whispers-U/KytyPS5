@@ -19,6 +19,7 @@
 #include "loader/elf.h"
 #include "loader/gamePatch.h"
 #include "loader/guestInstructionPatcher.h"
+#include "loader/hotHle.h"
 #include "loader/jit.h"
 #include "loader/symbolDatabase.h"
 #include "loader/x64InstructionEmulator.h"
@@ -105,7 +106,8 @@ struct RelocationInfo {
 	uint64_t    base_vaddr = 0;
 	std::string name;
 	std::string dbg_name;
-	bool        bind_self = false;
+	bool        bind_self   = false;
+	bool        import_slot = false; // GLOB_DAT or JUMP_SLOT: a GOT/PLT entry holding an address
 };
 
 struct StubbedImportRecord {
@@ -811,6 +813,7 @@ static RelocationInfo GetRelocationInfo(Elf64_Rela* r, Program* program) {
 	ret.base_vaddr       = program->base_vaddr;
 	ret.vaddr            = ret.base_vaddr + r->r_offset;
 	ret.bind_self        = false;
+	ret.import_slot      = (type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT);
 
 	switch (type) {
 		case R_X86_64_GLOB_DAT:
@@ -885,7 +888,11 @@ static bool RelocateRecord(uint32_t index, Elf64_Rela* r, Program* program, bool
 		}
 	}
 
-	const bool patched = PatchGuestMemory64(ri.vaddr, value);
+	const bool hot_slot = HotHle::IsEnabled() && ri.import_slot && ri.type == SymbolType::Func &&
+	                      !ri.bind_self && (ri.vaddr % 8u) == 0 &&
+	                      (ri.bind == BindType::Global || ri.bind == BindType::Weak);
+	const bool patched  = hot_slot ? HotHle::WriteImportSlot(ri.name, ri.vaddr, value, ri.resolved)
+	                               : PatchGuestMemory64(ri.vaddr, value);
 	if (patched && stubbed) {
 		LOGF("Relocate: unresolved %s import patched to stub [%u] [%016" PRIx64 "] <- %016" PRIx64
 		     ", %s, %s, %s, %s\n",
@@ -1113,6 +1120,8 @@ void RuntimeLinker::UnloadProgram(Program* program) {
 	auto it = std::find(m_programs.begin(), m_programs.end(), program);
 	EXIT_IF(it == m_programs.end());
 	m_programs.erase(it);
+
+	HotHle::OnProgramUnloading(program->base_vaddr, program->mapped_size);
 
 	for (auto* importer: m_programs) {
 		const auto& info = *importer->dynamic_info;
