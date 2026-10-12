@@ -11,8 +11,10 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <atomic>
 #include <memory>
 #include <span>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 
@@ -110,6 +112,11 @@ public:
 	// Development aid (KYTY_SHADER_OVERRIDE): applies changed shader override files. Cheap to
 	// call often; it checks the files at most twice a second. GPU thread only.
 	void ReloadShaderOverrides();
+	// Writes the driver pipeline cache to disk while the game runs, so a run that ends in a crash
+	// or a forced stop still leaves it for the next one. Saves once new pipelines have stopped
+	// arriving for a few seconds (or after a minute at most); the file is written on a
+	// background thread. Cheap to call often. GPU thread only.
+	void SaveDriverCacheIfNeeded();
 
 	struct Pipeline {
 		vk::PipelineLayout      pipeline_layout       = nullptr;
@@ -181,8 +188,16 @@ private:
 	                                                        m_graphics_pipelines;
 	std::unordered_map<uint64_t, std::unique_ptr<Pipeline>> m_compute_pipelines;
 	std::chrono::steady_clock::time_point                   m_override_next_check {};
+	uint32_t                                                m_unsaved_pipelines = 0;
+	std::chrono::steady_clock::time_point                   m_last_pipeline_build {};
+	std::chrono::steady_clock::time_point                   m_last_cache_save {};
+	std::thread                                             m_cache_writer;
+	std::atomic_bool                                        m_cache_writing {false};
 
-	void InitializeDriverCache();
+	void                               InitializeDriverCache();
+	[[nodiscard]] std::vector<uint8_t> ReadDriverCacheData();
+	bool                               WriteDriverCacheFile(const std::vector<uint8_t>& payload);
+	void                               NotePipelineBuilt();
 };
 
 void LogPipelineTrace(const char* phase, uint64_t vertex_program_id, uint64_t pixel_program_id);

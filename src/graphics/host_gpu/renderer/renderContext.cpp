@@ -144,6 +144,7 @@ void RenderContext::RunGarbageCollector() {
 	m_texture_cache.RunGarbageCollector();
 	m_buffer_cache.RunGarbageCollector();
 	m_pipeline_cache.ReloadShaderOverrides();
+	m_pipeline_cache.SaveDriverCacheIfNeeded();
 }
 
 void RenderContext::AddInterruptEq(LibKernel::EventQueue::KernelEqueue eq, int event_id) {

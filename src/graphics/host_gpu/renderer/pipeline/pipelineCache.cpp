@@ -688,6 +688,7 @@ void PipelineCache::InitializeDriverCache() {
 		m_driver_cache = nullptr;
 		return;
 	}
+	m_last_cache_save = std::chrono::steady_clock::now();  // the minute before an overdue save starts now
 	if (!initial_data.empty()) {
 		PipelineCacheLog("Vulkan pipeline cache: loaded {} bytes from {}", initial_data.size(),
 		                 path);
@@ -696,11 +697,46 @@ void PipelineCache::InitializeDriverCache() {
 	}
 }
 
-void PipelineCache::Save() {
-	if (m_driver_cache == nullptr) {
+void PipelineCache::NotePipelineBuilt() {
+	m_unsaved_pipelines++;
+	m_last_pipeline_build = std::chrono::steady_clock::now();
+}
+
+void PipelineCache::SaveDriverCacheIfNeeded() {
+	if (m_driver_cache == nullptr || m_unsaved_pipelines == 0 || m_cache_writing.load()) {
 		return;
 	}
+	using namespace std::chrono_literals;
+	const auto now     = std::chrono::steady_clock::now();
+	const bool quiet   = now - m_last_pipeline_build >= 3s;
+	const bool overdue = now - m_last_cache_save >= 60s;
+	if (!quiet && !overdue) {
+		return;
+	}
+	m_last_cache_save = now;
+	const auto new_pipelines = m_unsaved_pipelines;
+	auto       payload       = ReadDriverCacheData();
+	const auto read_ms =
+	    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - now).count();
+	if (payload.empty()) {
+		return;
+	}
+	m_unsaved_pipelines = 0;
+	if (m_cache_writer.joinable()) {
+		m_cache_writer.join();  // finished: m_cache_writing is false
+	}
+	m_cache_writing = true;
+	m_cache_writer  = std::thread([this, payload = std::move(payload), new_pipelines, read_ms] {
+		if (WriteDriverCacheFile(payload)) {
+			PipelineCacheLog("Vulkan pipeline cache: saved {} bytes while running ({} new pipelines, "
+			                  "{:.1f} ms on the GPU thread)",
+			                  payload.size(), new_pipelines, read_ms);
+		}
+		m_cache_writing = false;
+	});
+}
 
+std::vector<uint8_t> PipelineCache::ReadDriverCacheData() {
 	size_t               size = 0;
 	vk::Result           result;
 	std::vector<uint8_t> payload;
@@ -721,15 +757,19 @@ void PipelineCache::Save() {
 	    size > std::numeric_limits<uint32_t>::max()) {
 		PipelineCacheLog("Vulkan pipeline cache: save failed ({}, {} bytes)",
 		                 vk::to_string(result), size);
-		return;
+		return {};
 	}
 	payload.resize(size);
+	return payload;
+}
+
+bool PipelineCache::WriteDriverCacheFile(const std::vector<uint8_t>& payload) {
 	auto       prefix       = DriverCacheSignature(m_graphics.GetPhysicalDeviceProperties());
 	const auto payload_hash = XXH3_64bits(payload.data(), payload.size());
 	prefix.append(reinterpret_cast<const char*>(&payload_hash), sizeof(payload_hash));
 	if (!Common::File::CreateDirectories(m_driver_cache_path.parent_path())) {
 		PipelineCacheLog("Vulkan pipeline cache: failed to create cache directory");
-		return;
+		return false;
 	}
 	auto temp_path = m_driver_cache_path;
 	temp_path += ".tmp";
@@ -746,10 +786,23 @@ void PipelineCache::Save() {
 	    !Common::File::RenameFile(temp_path, m_driver_cache_path)) {
 		PipelineCacheLog("Vulkan pipeline cache: failed to write {}",
 		                 Common::PathToString(m_driver_cache_path));
+		return false;
+	}
+	return true;
+}
+
+void PipelineCache::Save() {
+	if (m_cache_writer.joinable()) {
+		m_cache_writer.join();  // the same temporary file is used below
+	}
+	if (m_driver_cache == nullptr) {
 		return;
 	}
-	PipelineCacheLog("Vulkan pipeline cache: saved {} bytes to {}", payload.size(),
-	                 Common::PathToString(m_driver_cache_path));
+	const auto payload = ReadDriverCacheData();
+	if (!payload.empty() && WriteDriverCacheFile(payload)) {
+		PipelineCacheLog("Vulkan pipeline cache: saved {} bytes to {}", payload.size(),
+		                 Common::PathToString(m_driver_cache_path));
+	}
 	m_graphics.device.destroyPipelineCache(m_driver_cache, nullptr);
 	m_driver_cache = nullptr;
 }
@@ -1063,6 +1116,7 @@ PipelineCache::Pipeline& PipelineCache::GetGraphicsPipeline(
 	EXIT_NOT_IMPLEMENTED(cached->pipeline == nullptr);
 	EXIT_NOT_IMPLEMENTED(cached->pipeline_layout == nullptr);
 
+	NotePipelineBuilt();
 	auto [iter, inserted] = m_graphics_pipelines.emplace(std::move(key), std::move(cached));
 	EXIT_IF(!inserted);
 
@@ -1098,6 +1152,7 @@ PipelineCache::GetComputePipeline(const ShaderComputeInputInfo& input_info,
 	EXIT_NOT_IMPLEMENTED(cached->pipeline == nullptr);
 	EXIT_NOT_IMPLEMENTED(cached->pipeline_layout == nullptr);
 
+	NotePipelineBuilt();
 	auto [iter, inserted] = m_compute_pipelines.emplace(compute_program.id, std::move(cached));
 	EXIT_IF(!inserted);
 
