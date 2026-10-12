@@ -8,6 +8,7 @@
 #include "graphics/host_gpu/vulkanCommon.h"
 #include "graphics/shader/shader.h"
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -106,6 +107,9 @@ public:
 	~PipelineCache();
 	KYTY_CLASS_NO_COPY(PipelineCache);
 	void Save();
+	// Development aid (KYTY_SHADER_OVERRIDE): applies changed shader override files. Cheap to
+	// call often; it checks the files at most twice a second. GPU thread only.
+	void ReloadShaderOverrides();
 
 	struct Pipeline {
 		vk::PipelineLayout      pipeline_layout       = nullptr;
@@ -176,6 +180,7 @@ private:
 	std::unordered_map<GraphicsPipelineKey, std::unique_ptr<Pipeline>, GraphicsPipelineKeyHash>
 	                                                        m_graphics_pipelines;
 	std::unordered_map<uint64_t, std::unique_ptr<Pipeline>> m_compute_pipelines;
+	std::chrono::steady_clock::time_point                   m_override_next_check {};
 
 	void InitializeDriverCache();
 };

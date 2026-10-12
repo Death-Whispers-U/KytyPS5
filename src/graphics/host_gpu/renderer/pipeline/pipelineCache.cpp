@@ -12,6 +12,7 @@
 #include "graphics/host_gpu/renderer/depthRenderTarget.h"
 #include "graphics/host_gpu/renderer/image/imageView.h"
 #include "graphics/host_gpu/renderer/pipeline/blendMapping.h"
+#include "graphics/host_gpu/renderer/pipeline/shaderOverride.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/shader/recompiler/ShaderRecompiler.h"
@@ -24,6 +25,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fmt/format.h>
@@ -221,6 +223,11 @@ struct PipelineCache::ProgramCache {
 		ShaderRecompiler::IR::ResourceSpecialization specialization;
 		ShaderRecompiler::IR::CompiledShaderInfo     program;
 		ShaderProgram                                handle;
+		// Set only when ShaderOverride is enabled: the variant name, the translator's own
+		// output (to restore when an override is removed), and the override file's stamp.
+		std::string           override_name;
+		std::vector<uint32_t> translated_spirv;
+		int64_t               override_stamp = 0;
 	};
 
 	struct SourceEntry {
@@ -303,18 +310,92 @@ struct PipelineCache::ProgramCache {
 		}
 		DumpShaderSpirv(stage_name, options.shader_hash, result.spirv);
 
-		const auto module = CompileSPV(result.spirv, device);
+		std::string           override_name;
+		std::vector<uint32_t> translated_spirv;
+		int64_t               override_stamp = 0;
+		const auto*           spirv          = &result.spirv;
+		ShaderOverride::LoadResult override;
+		if (ShaderOverride::IsEnabled()) {
+			override_name = ShaderOverride::VariantName(stage_name, options.shader_hash, result.spirv);
+			ShaderOverride::Dump(override_name, result.spirv);
+			override_stamp = ShaderOverride::OverrideStamp(override_name);
+			override       = ShaderOverride::Load(override_name, result.spirv);
+			if (override.ok) {
+				spirv = &override.spirv;
+				std::printf("ShaderOverride: applied %s\n", override_name.c_str());
+			} else if (override.present) {
+				std::printf("ShaderOverride: rejected %s: %s\n", override_name.c_str(),
+				            override.error.c_str());
+				if (!override.readable) {
+					override_stamp = 0; // the next poll sees a new stamp and tries again
+				}
+			}
+			std::fflush(stdout);
+			translated_spirv = result.spirv;
+		}
+
+		const auto module = CompileSPV(*spirv, device);
 		EXIT_IF(module == nullptr);
 		if (options.dump_ir) {
 			LOGF("%s SPIR-V words=%" PRIu64 " wave_size=%u\n", options.dump_label,
-			     static_cast<uint64_t>(result.spirv.size()), options.wave_size);
+			     static_cast<uint64_t>(spirv->size()), options.wave_size);
 		}
 		return {
-		    .function_code  = {function_code.begin(), function_code.end()},
-		    .specialization = std::move(specialization),
-		    .program        = std::move(result.program).TakeCompiledInfo(),
-		    .handle         = {.id = ++next_shader_id, .module = module},
+		    .function_code    = {function_code.begin(), function_code.end()},
+		    .specialization   = std::move(specialization),
+		    .program          = std::move(result.program).TakeCompiledInfo(),
+		    .handle           = {.id = ++next_shader_id, .module = module},
+		    .override_name    = std::move(override_name),
+		    .translated_spirv = std::move(translated_spirv),
+		    .override_stamp   = override_stamp,
 		};
+	}
+
+	// Picks up added, edited and removed override files. A changed shader gets a new module and a
+	// new id; pipelines are keyed by id, so every pipeline using it is rebuilt on its next draw.
+	// Pipelines already built keep working: Vulkan lets a module be destroyed once pipelines
+	// created from it exist. Runs on the GPU thread, which owns this cache.
+	void ReloadOverrides() {
+		for (auto& [key, entry]: programs) {
+			(void)key;
+			for (auto& p: entry.permutations) {
+				if (p.override_name.empty()) {
+					continue;
+				}
+				const auto stamp = ShaderOverride::OverrideStamp(p.override_name);
+				if (stamp == p.override_stamp) {
+					continue;
+				}
+
+				std::vector<uint32_t> spirv;
+				const char*           action = "applied";
+				if (stamp == 0) {
+					spirv  = p.translated_spirv;
+					action = "reverted";
+				} else {
+					auto loaded = ShaderOverride::Load(p.override_name, p.translated_spirv);
+					if (!loaded.readable) {
+						continue; // e.g. the editor still holds the file; try again next poll
+					}
+					p.override_stamp = stamp;
+					if (!loaded.ok) {
+						std::printf("ShaderOverride: rejected %s: %s\n", p.override_name.c_str(),
+						            loaded.error.c_str());
+						std::fflush(stdout);
+						continue; // keep the module that is running now
+					}
+					spirv = std::move(loaded.spirv);
+				}
+				p.override_stamp = stamp;
+
+				// Validated above; CompileSPV still exits if the driver rejects the module.
+				const auto module = CompileSPV(spirv, device);
+				device.destroyShaderModule(p.handle.module, nullptr);
+				p.handle = {.id = ++next_shader_id, .module = module};
+				std::printf("ShaderOverride: %s %s\n", action, p.override_name.c_str());
+				std::fflush(stdout);
+			}
+		}
 	}
 
 	template <typename InputInfo>
@@ -478,6 +559,18 @@ PipelineCache::PipelineCache(GraphicContext& graphics)
     : m_graphics(graphics), m_program_cache(std::make_unique<ProgramCache>(graphics.device)) {
 	EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread());
 	InitializeDriverCache();
+}
+
+void PipelineCache::ReloadShaderOverrides() {
+	if (!ShaderOverride::IsEnabled()) {
+		return;
+	}
+	const auto now = std::chrono::steady_clock::now();
+	if (now < m_override_next_check) {
+		return;
+	}
+	m_override_next_check = now + std::chrono::milliseconds(500);
+	m_program_cache->ReloadOverrides();
 }
 
 PipelineCache::~PipelineCache() {
