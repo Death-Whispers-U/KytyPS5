@@ -20,6 +20,7 @@
 #include "graphics/presentation/systemOverlay.h"
 #include "graphics/presentation/window/hostInput.h"
 #include "graphics/presentation/window/windowInternal.h"
+#include "graphics/presentation/window/frameTimes.h"
 #include "kytyGitVersion.h"
 #include "libs/controller.h"
 #include "loader/systemContent.h"
@@ -757,6 +758,7 @@ void WindowContext::Run() {
 				UpdateTitle(frames, static_cast<double>(frames - title_frames) * 1000.0 /
 				                        static_cast<double>(elapsed));
 			}
+			FrameTimes::Report();
 			title_time   = now;
 			title_frames = frames;
 		}

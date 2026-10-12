@@ -86,6 +86,7 @@ static void PrintUsage() {
 	::printf("  --profile                            Enable the Tracy profiler.\n");
 	::printf("  --gpu-checkpoints                    Mark every draw and dispatch so a lost GPU\n"
 	         "                                       device reports how far it got. NVIDIA only.\n");
+	::printf("  --frame-times                        Print every second's frame intervals (ms).\n");
 	::printf("  --trace-shader <hash>                Report one shader's bindings and what last\n"
 	         "                                       wrote them, e.g. cs_657ad04626bf9d55.\n");
 	::printf("  --trace-list <buf>:<stride>:<next>   With --trace-shader: check that buffer's\n"
@@ -304,6 +305,11 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 
 		if (arg == "--gpu-checkpoints") {
 			options.config.gpu_checkpoints_enabled = true;
+			continue;
+		}
+
+		if (arg == "--frame-times") {
+			options.config.frame_times_enabled = true;
 			continue;
 		}
 

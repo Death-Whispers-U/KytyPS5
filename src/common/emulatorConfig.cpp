@@ -156,6 +156,10 @@ bool GpuCheckpointsRequested() {
 	return g_config->gpu_checkpoints_enabled;
 }
 
+bool FrameTimesEnabled() {
+	return g_config->frame_times_enabled;
+}
+
 uint64_t TraceShaderHash() {
 	return g_config->trace_shader_hash;
 }
