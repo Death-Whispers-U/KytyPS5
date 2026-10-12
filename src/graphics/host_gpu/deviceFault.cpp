@@ -3,8 +3,11 @@
 #include "graphics/host_gpu/graphicContext.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cinttypes>
 #include <cstdio>
+#include <mutex>
 #include <vector>
 
 // A macro keeps every format string a literal the compiler can check.
@@ -19,13 +22,17 @@ namespace Libs::Graphics {
 namespace {
 
 std::atomic<GraphicContext*> g_context {nullptr};
-std::atomic_bool             g_reported {false};
+std::mutex                   g_report_mutex;
+std::condition_variable      g_report_cv;
+bool                         g_report_started = false;
+bool                         g_report_done    = false;
 
 void QueryFaults(GraphicContext& graphics) {
 	if (!graphics.device_fault_enabled) {
 		KYTY_FAULT_PRINT("DeviceFault: not available (VK_EXT_device_fault is not enabled on this device)\n");
 		return;
 	}
+	KYTY_FAULT_PRINT("DeviceFault: asking the driver what faulted\n");
 	vk::DeviceFaultCountsEXT counts {};
 	if (graphics.device.getFaultInfoEXT(&counts, nullptr) != vk::Result::eSuccess) {
 		KYTY_FAULT_PRINT("DeviceFault: the driver did not return fault counts\n");
@@ -68,8 +75,15 @@ void RegisterDeviceFaultContext(GraphicContext* context) {
 }
 
 void ReportDeviceFailure(const char* where, vk::Result result) {
-	if (g_reported.exchange(true)) {
-		return;
+	{
+		std::unique_lock lock(g_report_mutex);
+		if (g_report_started) {
+			// Another thread is already reporting. Returning now would let this thread's EXIT end the
+			// process before that report is printed, so wait for it (bounded, in case the driver hangs).
+			g_report_cv.wait_for(lock, std::chrono::seconds(10), [] { return g_report_done; });
+			return;
+		}
+		g_report_started = true;
 	}
 	const bool lost = result == vk::Result::eErrorDeviceLost;
 	KYTY_FAULT_PRINT("%s: %s failed with %s\n", lost ? "DeviceLost" : "VulkanFailure", where,
@@ -77,6 +91,11 @@ void ReportDeviceFailure(const char* where, vk::Result result) {
 	if (auto* graphics = g_context.load(); lost && graphics != nullptr) {
 		QueryFaults(*graphics);
 	}
+	{
+		std::lock_guard lock(g_report_mutex);
+		g_report_done = true;
+	}
+	g_report_cv.notify_all();
 }
 
 } // namespace Libs::Graphics
