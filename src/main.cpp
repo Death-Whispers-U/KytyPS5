@@ -84,6 +84,8 @@ static void PrintUsage() {
 	::printf("  --printf-direction <value>           Silent, Console, or File.\n");
 	::printf("  --printf-output-file <path>          Guest printf output file.\n");
 	::printf("  --profile                            Enable the Tracy profiler.\n");
+	::printf("  --gpu-checkpoints                    Mark every draw and dispatch so a lost GPU\n"
+	         "                                       device reports how far it got. NVIDIA only.\n");
 	::printf("  --spirv-debug-printf <true|false>    Enable SPIR-V debug printf.\n");
 	::printf(
 	    "  --readback-linear-images <true|false> Read back writable linear images on submit.\n");
@@ -254,6 +256,11 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 
 		if (arg == "--profile") {
 			options.config.profiler_enabled = true;
+			continue;
+		}
+
+		if (arg == "--gpu-checkpoints") {
+			options.config.gpu_checkpoints_enabled = true;
 			continue;
 		}
 

@@ -152,6 +152,10 @@ bool GpuAssistedValidationEnabled() {
 	return g_config->gpu_assisted_validation_enabled && g_config->vulkan_validation_enabled;
 }
 
+bool GpuCheckpointsRequested() {
+	return g_config->gpu_checkpoints_enabled;
+}
+
 bool RenderDocEnabled() {
 	return g_config->renderdoc_enabled;
 }

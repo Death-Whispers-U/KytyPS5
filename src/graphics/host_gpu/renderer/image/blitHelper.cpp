@@ -3,6 +3,7 @@
 #include "common/assert.h"
 #include "gpu_blit_shaders/gpu_blit_color_to_ms_depth_spv.h"
 #include "gpu_blit_shaders/gpu_blit_fs_triangle_spv.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 #include "graphics/host_gpu/renderer/image/image.h"
@@ -191,6 +192,7 @@ void BlitHelper::ReinterpretColorAsMsDepth(Image& source, Image& destination) {
 	                            {destination_info.extent.width, destination_info.extent.height}};
 	command.setViewport(0, 1, &viewport);
 	command.setScissor(0, 1, &scissor);
+	GpuCheckpoint(command, "blit");
 	command.draw(3, 1, 0, 0);
 	command.endRendering();
 	// The helper pipeline has static state that invalidates the guest draw's dynamic state.

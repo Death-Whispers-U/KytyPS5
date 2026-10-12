@@ -7,6 +7,7 @@
 #include "common/profiler.h"
 #include "common/threads.h"
 #include "graphics/guest_gpu/hardwareContext.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/host_gpu/renderer/colorRenderTarget.h"
 #include "graphics/host_gpu/renderer/debug.h"
 #include "graphics/host_gpu/renderer/depthRenderTarget.h"
@@ -354,11 +355,13 @@ struct PipelineCache::ProgramCache {
 			LOGF("%s SPIR-V words=%" PRIu64 " wave_size=%u\n", options.dump_label,
 			     static_cast<uint64_t>(spirv->size()), options.wave_size);
 		}
+		const auto id = ++next_shader_id;
+		RegisterGpuShaderName(id, stage_name, options.shader_hash);
 		return {
 		    .function_code    = {function_code.begin(), function_code.end()},
 		    .specialization   = std::move(specialization),
 		    .program          = std::move(result.program).TakeCompiledInfo(),
-		    .handle           = {.id = ++next_shader_id, .module = module},
+		    .handle           = {.id = id, .module = module},
 		    .override_name    = std::move(override_name),
 		    .translated_spirv = std::move(translated_spirv),
 		    .override_stamp   = override_stamp,
@@ -405,7 +408,9 @@ struct PipelineCache::ProgramCache {
 				// Validated above; CompileSPV still exits if the driver rejects the module.
 				const auto module = CompileSPV(spirv, device);
 				device.destroyShaderModule(p.handle.module, nullptr);
+				const auto old_id = p.handle.id;
 				p.handle = {.id = ++next_shader_id, .module = module};
+				CopyGpuShaderName(old_id, p.handle.id);
 				std::printf("ShaderOverride: %s %s\n", action, p.override_name.c_str());
 				std::fflush(stdout);
 			}

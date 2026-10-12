@@ -10,6 +10,7 @@
 #include "common/threads.h"
 #include "graphics/guest_gpu/gpu_defs.h"
 #include "graphics/guest_gpu/graphicsRun.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/guest_gpu/hardwareContext.h"
 #include "graphics/guest_gpu/tile.h"
 #include "graphics/host_gpu/graphicContext.h"
@@ -1209,6 +1210,18 @@ void RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, CommandBuffer& buff
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
 	if (!draw.IsIndexed()) {
 		SetDrawDebugPhase(buffer, submit_id, draw, 0x500u);
+	}
+	if (GpuCheckpointsEnabled()) {
+		GpuCheckpointInfo checkpoint {};
+		checkpoint.kind      = mesh_active ? GpuCheckpointKind::DrawMesh : GpuCheckpointKind::Draw;
+		checkpoint.submit_id = submit_id;
+		for (uint32_t i = 0; i < 3; i++) {
+			checkpoint.shader_ids[i] = state.programs.vertex[i].id;
+		}
+		checkpoint.shader_ids[3] = state.ps_active ? state.programs.pixel.id : 0;
+		checkpoint.counts[0]     = draw.index_count;
+		checkpoint.counts[1]     = draw.instance_count;
+		GpuCheckpoint(vk_buffer, checkpoint);
 	}
 	if (mesh_active) {
 		vk_buffer.drawMeshTasksEXT(mesh_groups, draw.instance_count, 1);

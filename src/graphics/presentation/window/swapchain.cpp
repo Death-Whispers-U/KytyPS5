@@ -6,6 +6,7 @@
 #include "common/threads.h"
 #include "gpu_blit_shaders/gpu_blit_fs_triangle_spv.h"
 #include "gpu_blit_shaders/gpu_video_out_overlay_spv.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
@@ -758,6 +759,7 @@ void Swapchain::DrawOverlay(vk::CommandBuffer command, const Presenter::Layer& l
 	const vk::Rect2D scissor {{0, 0}, m_extent};
 	command.setViewport(0, 1, &viewport);
 	command.setScissor(0, 1, &scissor);
+	GpuCheckpoint(command, "present");
 	command.draw(3, 1, 0, 0);
 	command.endRendering();
 }

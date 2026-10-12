@@ -1,5 +1,6 @@
 #include "graphics/host_gpu/deviceFault.h"
 
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/host_gpu/graphicContext.h"
 
 #include <atomic>
@@ -90,6 +91,7 @@ void ReportDeviceFailure(const char* where, vk::Result result) {
 	      vk::to_string(result).c_str());
 	if (auto* graphics = g_context.load(); lost && graphics != nullptr) {
 		QueryFaults(*graphics);
+		ReportGpuCheckpoints(*graphics);
 	}
 	{
 		std::lock_guard lock(g_report_mutex);

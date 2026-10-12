@@ -8,6 +8,7 @@
 #include "common/threads.h"
 #include "graphics/guest_gpu/gpu_defs.h"
 #include "graphics/guest_gpu/graphicsRun.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/guest_gpu/hardwareContext.h"
 #include "graphics/guest_gpu/pm4.h"
 #include "graphics/host_gpu/graphicContext.h"
@@ -430,6 +431,16 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, CommandBuffer& buffer,
 	}
 
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+	if (GpuCheckpointsEnabled()) {
+		GpuCheckpointInfo checkpoint {};
+		checkpoint.kind          = GpuCheckpointKind::Dispatch;
+		checkpoint.submit_id     = submit_id;
+		checkpoint.shader_ids[0] = compute_program.id;
+		checkpoint.counts[0]     = thread_group_x;
+		checkpoint.counts[1]     = thread_group_y;
+		checkpoint.counts[2]     = thread_group_z;
+		GpuCheckpoint(vk_buffer, checkpoint);
+	}
 	vk_buffer.dispatch(thread_group_x, thread_group_y, thread_group_z);
 
 	// The removed host fence also ordered read-only dispatches before later writers.
@@ -492,6 +503,13 @@ void RenderExecutor::DispatchIndirect(uint64_t submit_id, CommandBuffer& buffer,
 	                          vk::PipelineStageFlagBits::eDrawIndirect, {},
 	                          1, &barrier, 0, nullptr, 0, nullptr);
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+	if (GpuCheckpointsEnabled()) {
+		GpuCheckpointInfo checkpoint {};
+		checkpoint.kind          = GpuCheckpointKind::DispatchIndirect;
+		checkpoint.submit_id     = submit_id;
+		checkpoint.shader_ids[0] = compute_program.id;
+		GpuCheckpoint(vk_buffer, checkpoint);
+	}
 	vk_buffer.dispatchIndirect(args_buffer->Handle(), args_offset);
 	ShaderAccessBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	ResetBindings();
