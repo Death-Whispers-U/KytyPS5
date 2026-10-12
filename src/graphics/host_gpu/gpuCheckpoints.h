@@ -4,6 +4,7 @@
 #include "graphics/host_gpu/vulkanCommon.h"
 
 #include <cstdint>
+#include <string>
 
 namespace Libs::Graphics {
 
@@ -41,6 +42,8 @@ void GpuCheckpoint(vk::CommandBuffer command, const char* label);
 
 // Remembers the printable name of a shader program ("ps_4aa5db68601dcd19") for reports.
 void RegisterGpuShaderName(uint64_t shader_id, const char* stage_name, uint64_t shader_hash);
+// The registered name of a shader program, or "shader#<id>" when it has none.
+[[nodiscard]] std::string GpuShaderName(uint64_t shader_id);
 // A program recompiled under a new id (shader override reload) keeps its name.
 void CopyGpuShaderName(uint64_t old_id, uint64_t new_id);
 

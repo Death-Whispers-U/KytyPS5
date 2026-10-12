@@ -43,13 +43,6 @@ const char* KindName(GpuCheckpointKind kind) {
 	return "unknown";
 }
 
-std::string ShaderName(uint64_t id) {
-	std::lock_guard lock(g_names_mutex);
-	if (auto it = g_names.find(id); it != g_names.end()) {
-		return it->second;
-	}
-	return "shader#" + std::to_string(id);
-}
 
 // Caller holds g_ring_mutex.
 std::string Describe(uint64_t seq) {
@@ -65,7 +58,7 @@ std::string Describe(uint64_t seq) {
 	text += " submit=" + std::to_string(info.submit_id);
 	for (const auto id: info.shader_ids) {
 		if (id != 0) {
-			text += " " + ShaderName(id);
+			text += " " + GpuShaderName(id);
 		}
 	}
 	if (info.kind == GpuCheckpointKind::Dispatch) {
@@ -113,6 +106,14 @@ void GpuCheckpoint(vk::CommandBuffer command, const char* label) {
 	info.kind  = GpuCheckpointKind::Internal;
 	info.label = label;
 	GpuCheckpoint(command, info);
+}
+
+std::string GpuShaderName(uint64_t shader_id) {
+	std::lock_guard lock(g_names_mutex);
+	if (auto it = g_names.find(shader_id); it != g_names.end()) {
+		return it->second;
+	}
+	return "shader#" + std::to_string(shader_id);
 }
 
 void RegisterGpuShaderName(uint64_t shader_id, const char* stage_name, uint64_t shader_hash) {

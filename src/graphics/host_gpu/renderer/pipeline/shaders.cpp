@@ -4,6 +4,7 @@
 #include "common/logging/log.h"
 #include "common/profiler.h"
 #include "graphics/guest_gpu/gpu_defs.h"
+#include "graphics/host_gpu/gpuCheckpoints.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/debug.h"
 #include "graphics/host_gpu/renderer/pipeline/descriptors.h"
@@ -19,6 +20,7 @@
 #include "graphics/shader/shader.h"
 
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <limits>
 #include <span>
@@ -541,8 +543,16 @@ void CreatePipelineInternal(GraphicContext& graphics, PipelineCache::Pipeline& p
 		     (with_depth ? "true" : "false"), (static_params.blend_enable[0] ? "true" : "false"),
 		     dynamic_state.dynamicStateCount);
 	}
+	const auto build_start = std::chrono::steady_clock::now();
 	result = graphics.device.createGraphicsPipelines(driver_cache, 1, &pipeline_info, nullptr,
 	                                                 &pipeline.pipeline);
+	// One line per driver pipeline build, so tools can tell driver compile time from translation.
+	LOGF("PipelineBuild: graphics elapsed_us=%" PRId64 " %s %s\n",
+	     static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+	                              std::chrono::steady_clock::now() - build_start)
+	                              .count()),
+	     GpuShaderName(vertex_program.id).c_str(),
+	     ps_active ? GpuShaderName(pixel_program.id).c_str() : "-");
 	if (graphics_debug_dump_enabled()) {
 		LOGF("PipelineTrace: vkCreateGraphicsPipelines done result=%s pipeline=%p\n",
 		     vk::to_string(result).c_str(), static_cast<void*>(pipeline.pipeline));

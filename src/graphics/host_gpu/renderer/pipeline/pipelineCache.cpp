@@ -1085,8 +1085,15 @@ PipelineCache::GetComputePipeline(const ShaderComputeInputInfo& input_info,
 		ShaderDbgDumpInputInfo(input_info);
 	}
 
-	auto cached = std::make_unique<Pipeline>();
+	auto       cached      = std::make_unique<Pipeline>();
+	const auto build_start = std::chrono::steady_clock::now();
 	CreatePipelineInternal(m_graphics, *cached, input_info, compute_program.module, m_driver_cache);
+	// One line per driver pipeline build, so tools can tell driver compile time from translation.
+	LOGF("PipelineBuild: compute elapsed_us=%" PRId64 " %s\n",
+	     static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+	                              std::chrono::steady_clock::now() - build_start)
+	                              .count()),
+	     GpuShaderName(compute_program.id).c_str());
 
 	EXIT_NOT_IMPLEMENTED(cached->pipeline == nullptr);
 	EXIT_NOT_IMPLEMENTED(cached->pipeline_layout == nullptr);
