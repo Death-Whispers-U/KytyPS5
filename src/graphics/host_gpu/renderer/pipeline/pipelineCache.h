@@ -4,6 +4,7 @@
 #include "common/abi.h"
 #include "common/assert.h"
 #include "common/common.h"
+#include "graphics/host_gpu/renderer/pipeline/shaderDiskCache.h"
 #include "graphics/host_gpu/renderer/renderTarget.h"
 #include "graphics/host_gpu/vulkanCommon.h"
 #include "graphics/shader/shader.h"
@@ -115,7 +116,8 @@ public:
 	// Writes the driver pipeline cache to disk while the game runs, so a run that ends in a crash
 	// or a forced stop still leaves it for the next one. Saves once new pipelines have stopped
 	// arriving for a few seconds (or after a minute at most); the file is written on a
-	// background thread. Cheap to call often. GPU thread only.
+	// background thread. Also appends newly translated shaders to the shader cache file. Cheap to
+	// call often. GPU thread only.
 	void SaveDriverCacheIfNeeded();
 
 	struct Pipeline {
@@ -193,8 +195,13 @@ private:
 	std::chrono::steady_clock::time_point                   m_last_cache_save {};
 	std::thread                                             m_cache_writer;
 	std::atomic_bool                                        m_cache_writing {false};
+	// Translated shaders kept between runs (_ShaderCache/<title>.bin). Same build rules as the
+	// driver cache: clean Release builds only, discarded when the emulator build changes.
+	ShaderDiskCache                                         m_shader_disk_cache;
+	std::chrono::steady_clock::time_point                   m_last_shader_flush {};
 
 	void                               InitializeDriverCache();
+	void                               InitializeShaderDiskCache(const std::string& title_id);
 	[[nodiscard]] std::vector<uint8_t> ReadDriverCacheData();
 	bool                               WriteDriverCacheFile(const std::vector<uint8_t>& payload);
 	void                               NotePipelineBuilt();
